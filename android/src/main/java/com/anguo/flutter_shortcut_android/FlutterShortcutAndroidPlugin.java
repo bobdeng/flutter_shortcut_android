@@ -8,14 +8,13 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
-import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Icon;
 import android.os.Build;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
 import android.util.Log;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import android.widget.Toast;
 
 import java.util.Map;
@@ -24,18 +23,22 @@ import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
+import io.flutter.plugin.common.PluginRegistry;
 import io.flutter.plugin.common.PluginRegistry.Registrar;
 
 /**
  * FlutterShortcutAndroidPlugin
  */
-public class FlutterShortcutAndroidPlugin implements MethodCallHandler {
-    private static final int MY_PERMISSIONS_WRITE_EXTERNAL_STORAGE = 8001;
+public class FlutterShortcutAndroidPlugin implements MethodCallHandler, PluginRegistry.RequestPermissionsResultListener {
+    private static final int REQUEST_PERMISSION_INSTALL_SHORTCUT = 8001;
+    private static final String TAG = "Shortcut";
     /**
      * Plugin registration.
      */
     private Context context;
     private Activity activity;
+    MethodCall pendingCall ;
+    Result pendingResult;
 
     public static void registerWith(Registrar registrar) {
         final MethodChannel channel = new MethodChannel(registrar.messenger(), "flutter_shortcut_android");
@@ -50,21 +53,24 @@ public class FlutterShortcutAndroidPlugin implements MethodCallHandler {
         if (call.method.equals("getPlatformVersion")) {
             result.success("Android " + android.os.Build.VERSION.RELEASE);
         } else if (call.method.equals("createShortcut")) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                if (ContextCompat.checkSelfPermission(context,
-                        Manifest.permission.INSTALL_SHORTCUT) != PackageManager.PERMISSION_GRANTED) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Log.d(TAG,"check install_shortcut permission");
+                if (hasNoPermission()) {
                     if (ActivityCompat.shouldShowRequestPermissionRationale(activity,
                             Manifest.permission.INSTALL_SHORTCUT)) {
                         Toast.makeText(activity, "需要创建快捷方式的权限", Toast.LENGTH_LONG).show();
 
                     } else {
-                        ActivityCompat.requestPermissions(activity,
-                                new String[]{Manifest.permission.INSTALL_SHORTCUT},
-                                MY_PERMISSIONS_WRITE_EXTERNAL_STORAGE);
+                        requestPermission(call, result);
                     }
                 } else {
+                    Log.d(TAG," permission granted");
                     installShortcut(call);
                 }
+            }else{
+                Log.d(TAG,"no need permission");
+                installShortcut(call);
+            }
         } else if (call.method.equals("getExtra")) {
             if (activity.getIntent().getExtras() != null) {
                 String extra = activity.getIntent().getExtras().getString("shortcut_extra");
@@ -76,6 +82,20 @@ public class FlutterShortcutAndroidPlugin implements MethodCallHandler {
         } else {
             result.notImplemented();
         }
+    }
+
+    private void requestPermission(MethodCall call, Result result) {
+        Log.d(TAG,"request install_shortcut permission");
+        pendingCall = call;
+        pendingResult = result;
+        ActivityCompat.requestPermissions(activity,
+                new String[]{Manifest.permission.INSTALL_SHORTCUT},
+                REQUEST_PERMISSION_INSTALL_SHORTCUT);
+    }
+
+    private boolean hasNoPermission() {
+        return ContextCompat.checkSelfPermission(activity,
+                Manifest.permission.INSTALL_SHORTCUT) != PackageManager.PERMISSION_GRANTED;
     }
 
     private void installShortcut(MethodCall call) {
@@ -127,5 +147,21 @@ public class FlutterShortcutAndroidPlugin implements MethodCallHandler {
         // 快捷方式的动作
         addShortcutIntent.putExtra(Intent.EXTRA_SHORTCUT_INTENT, actionIntent);
         context.sendBroadcast(addShortcutIntent);
+    }
+
+    @Override
+    public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQUEST_PERMISSION_INSTALL_SHORTCUT) {
+            if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                installShortcut(pendingCall);
+            } else {
+                pendingResult.error(
+                        "no_permissions", "neet install shortcut permission", null);
+                pendingResult = null;
+                pendingCall = null;
+            }
+            return true;
+        }
+        return false;
     }
 }
